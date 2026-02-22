@@ -10,6 +10,10 @@ func SetupRoutes(r *gin.Engine) {
 	r.GET("/api/categories", controllers.GetCategoriesHome)
 	r.GET("/api/services", controllers.GetServiceHome)
 	r.GET("/api/products/:slug", controllers.GetProductHome)
+	r.GET("/api/service/:slug", controllers.GetPersonalService)
+	r.GET("/api/payment-method", controllers.GetPaymentMethodActive)
+	r.POST("/api/create-transaction", controllers.CreateTransaction)
+	r.POST("/api/get-products", controllers.GetProducts)
 
 	api := r.Group("/api/admin")
 	{

@@ -10,6 +10,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func GetPaymentMethodActive(p *gin.Context) {
+	var PaymentMethod []models.PaymentMethod
+	err := config.DB.Where("is_active = ?", true).Find(&PaymentMethod).Error
+
+	if err != nil {
+		p.JSON(http.StatusInternalServerError, gin.H{"message": "Gagal mengambil data"})
+		return
+	}
+
+	if err != nil {
+		p.JSON(http.StatusNotFound, gin.H{"message": "Data tidak ditemukan"})
+		return
+	}
+
+	p.JSON(http.StatusOK, gin.H{"message": "berhasil", "data": &PaymentMethod})
+}
+
 func GetPaymentMethod(p *gin.Context)  {
 	var PaymentMethod []models.PaymentMethod
 

@@ -1,0 +1,264 @@
+package controllers
+
+import (
+	"api-arveshop-go/config"
+	"api-arveshop-go/models"
+	"bytes"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+)
+
+func GetProducts(c *gin.Context) {
+
+	apiURL := "https://api.digiflazz.com/v1/price-list"
+	username := os.Getenv("DIGIFLAZZ_USERNAME")
+	apiKey := os.Getenv("DIGIFLAZZ_PROD_KEY")
+
+	sign := md5Hash(username + apiKey + "pricelist")
+
+	payload := map[string]interface{}{
+		"cmd":      "prepaid",
+		"username": username,
+		"sign":     sign,
+	}
+
+	jsonData, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed create request"})
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed call Digiflazz"})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 {
+		c.JSON(500, gin.H{
+			"error":  "Digiflazz error",
+			"body":   string(body),
+			"status": resp.StatusCode,
+		})
+		return
+	}
+
+	var responseData map[string]interface{}
+	if err := json.Unmarshal(body, &responseData); err != nil {
+		c.JSON(500, gin.H{"error": "Invalid JSON response"})
+		return
+	}
+
+	data, ok := responseData["data"].([]interface{})
+	if !ok {
+		c.JSON(500, gin.H{
+			"error":    "Invalid API response structure",
+			"response": responseData,
+		})
+		return
+	}
+
+	for _, item := range data {
+
+		product, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		buyerSkuCode, _ := product["buyer_sku_code"].(string)
+		productName, _ := product["product_name"].(string)
+
+		if buyerSkuCode == "" || productName == "" {
+			continue
+		}
+
+		slug := slugify(getString(product, "brand"))
+
+		var existing models.Product
+
+		err := config.DB.Where("buyer_sku_code = ?", buyerSkuCode).First(&existing).Error
+
+		if err == nil {
+			// UPDATE
+			config.DB.Model(&existing).Updates(models.Product{
+				ProductName: productName,
+				Slug:        slug,
+				Category:    getString(product, "category"),
+				Brand:       getString(product, "brand"),
+				Type:        getString(product, "type"),
+				ProductType: "prepaid",
+				SellerName:  getString(product, "seller_name"),
+				SellingPrice: getUint(product["price"]),
+				Price:        getUint(product["price"]),
+				UpdatedAt:    time.Now(),
+			})
+		} else {
+			// CREATE
+			newProduct := models.Product{
+				BuyerSkuCode: buyerSkuCode,
+				ProductName:  productName,
+				Slug:         slug,
+				Category:     getString(product, "category"),
+				Brand:        getString(product, "brand"),
+				Type:         getString(product, "type"),
+				ProductType:  "prepaid",
+				SellerName:   getString(product, "seller_name"),
+				SellingPrice: getUint(product["price"]),
+				Price:        getUint(product["price"]),
+			}
+			config.DB.Create(&newProduct)
+		}
+	}
+
+	c.JSON(200, responseData)
+}
+
+
+// func GetProductsPasca(c *gin.Context) {
+
+// 	apiURL := "https://api.digiflazz.com/v1/price-list"
+// 	username := os.Getenv("DIGIFLAZZ_USERNAME")
+// 	apiKey := os.Getenv("DIGIFLAZZ_PROD_KEY")
+
+// 	sign := md5Hash(username + apiKey + "pricelist")
+
+// 	payload := map[string]interface{}{
+// 		"cmd":      "pasca",
+// 		"username": username,
+// 		"sign":     sign,
+// 	}
+
+// 	jsonData, _ := json.Marshal(payload)
+
+// 	req, _ := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+// 	req.Header.Set("Content-Type", "application/json")
+
+// 	client := &http.Client{}
+// 	resp, err := client.Do(req)
+// 	if err != nil {
+// 		c.JSON(500, gin.H{"error": "Failed call Digiflazz"})
+// 		return
+// 	}
+// 	defer resp.Body.Close()
+
+// 	body, _ := io.ReadAll(resp.Body)
+
+// 	var responseData map[string]interface{}
+// 	json.Unmarshal(body, &responseData)
+
+// 	data, ok := responseData["data"].([]interface{})
+// 	if !ok {
+// 		c.JSON(500, gin.H{"error": "Invalid API structure"})
+// 		return
+// 	}
+
+// 	for _, item := range data {
+
+// 		product, ok := item.(map[string]interface{})
+// 		if !ok {
+// 			continue
+// 		}
+
+// 		buyerSkuCode, _ := product["buyer_sku_code"].(string)
+// 		productName, _ := product["product_name"].(string)
+
+// 		if buyerSkuCode == "" || productName == "" {
+// 			continue
+// 		}
+
+// 		slug := slugify(getString(product, "brand"))
+
+// 		var existing models.ProdukPasca
+
+// 		err := config.DB.Where("buyer_sku_code = ?", buyerSkuCode).First(&existing).Error
+
+// 		if err == nil {
+// 			config.DB.Model(&existing).Updates(models.ProdukPasca{
+// 				ProductName: productName,
+// 				Slug:        slug,
+// 				Category:    getString(product, "category"),
+// 				Brand:       getString(product, "brand"),
+// 				ProductType: "postpaid",
+// 				SellerName:  getString(product, "seller_name"),
+// 				SellingPrice: getUint(product["price"]),
+// 				Price:        getUint(product["price"]),
+// 				Admin:        getUint(product["admin"]),
+// 				Commission:   getUint(product["commission"]),
+// 				UpdatedAt:    time.Now(),
+// 			})
+// 		} else {
+// 			newProduct := models.ProdukPasca{
+// 				BuyerSkuCode: buyerSkuCode,
+// 				ProductName:  productName,
+// 				Slug:         slug,
+// 				Category:     getString(product, "category"),
+// 				Brand:        getString(product, "brand"),
+// 				ProductType:  "postpaid",
+// 				SellerName:   getString(product, "seller_name"),
+// 				SellingPrice: getUint(product["price"]),
+// 				Price:        getUint(product["price"]),
+// 				Admin:        getUint(product["admin"]),
+// 				Commission:   getUint(product["commission"]),
+// 			}
+// 			config.DB.Create(&newProduct)
+// 		}
+// 	}
+
+// 	c.JSON(200, responseData)
+// }
+
+
+func md5Hash(text string) string {
+	hash := md5.Sum([]byte(text))
+	return hex.EncodeToString(hash[:])
+}
+
+func getString(data map[string]interface{}, key string) string {
+	if val, ok := data[key].(string); ok {
+		return val
+	}
+	return ""
+}
+
+func getUint(val interface{}) int64 {
+	switch v := val.(type) {
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	case string:
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return 0
+		}
+		return parsed
+	default:
+		return 0
+	}
+}
+
+
+
+func slugify(text string) string {
+	s := strings.ToLower(text)
+	s = strings.ReplaceAll(s, " ", "-")
+	return s
+}

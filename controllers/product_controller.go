@@ -19,7 +19,7 @@ func GetProductHome(p *gin.Context) {
         Where("seller_product_status = ?", true).
         Where("buyer_product_status = ?", true).
         Where("slug = ?", slug).
-        First(&products).Error // Gunakan First karena slug biasanya unique
+        Find(&products).Error // Gunakan First karena slug biasanya unique
 
     if err != nil {
         if errors.Is(err, gorm.ErrRecordNotFound) {

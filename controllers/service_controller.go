@@ -13,6 +13,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func GetPersonalService(s *gin.Context) {
+    slug := s.Param("slug")
+    var service models.Service
+
+    err := config.DB.Where("slug = ?", slug).First(&service).Error
+
+    if err != nil {
+        s.JSON(http.StatusNotFound, gin.H{"message": "Data tidak ada"})
+        return
+    }
+
+    s.JSON(http.StatusOK, gin.H{"message":"Berhasil", "data": service})
+}
+
 func GetServiceHome(s *gin.Context) {
     var services []models.Service
     err := config.DB.Where("is_active = ?", true).Find(&services).Error
