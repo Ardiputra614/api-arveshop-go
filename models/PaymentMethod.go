@@ -15,8 +15,8 @@ type PaymentMethod struct {
 	// cc | qris | bank_transfer | ewallet | cstore
 	Type string `gorm:"column:type;size:20;not null;index" json:"type"`
 
-	Logo *string `gorm:"column:logo;size:255" json:"logo"`
-	LogoPublicID *string `gorm:"column:logo_public_id;size:255" json:"logo_public_id"`
+	Logo string `gorm:"column:logo;size:255" json:"logo"`
+	LogoPublicID string `gorm:"column:logo_public_id;size:255" json:"logo_public_id"`
 
 	// true | false
 	IsActive    bool `gorm:"column:is_active;default:true;index" json:"is_active"`	

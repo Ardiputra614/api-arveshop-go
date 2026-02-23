@@ -34,6 +34,8 @@ func SetupRoutes(r *gin.Engine) {
 		
 		api.GET("/payment-method", controllers.GetPaymentMethod)
 		api.POST("/payment-method", controllers.CreatePaymentMethod)
+		api.PUT("/payment-method/:id", controllers.UpdatePaymentMethod)
+		api.DELETE("/payment-method/:id", controllers.DeletePaymentMethod)
 
 		
 		api.GET("/product-pasca", controllers.GetProductPasca)
