@@ -3,8 +3,11 @@ package models
 import (
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/datatypes"
 )
+
+
 
 type Transaction struct {
 	ID uint `gorm:"primaryKey" json:"id"`
@@ -22,12 +25,13 @@ type Transaction struct {
 	TransactionID *string `gorm:"column:transaction_id;unique" json:"transaction_id"`
 
 	// Payment Info
-	GrossAmount   uint64  `gorm:"column:gross_amount;not null" json:"gross_amount"`
-	SellingPrice *uint64 `gorm:"column:selling_price" json:"selling_price"`
-	PurchasePrice *uint64 `gorm:"column:purchase_price" json:"purchase_price"`
+	GrossAmount   decimal.Decimal  `gorm:"column:gross_amount;not null" json:"gross_amount"`
+	SellingPrice decimal.Decimal `gorm:"column:selling_price" json:"selling_price"`
+	PurchasePrice decimal.Decimal `gorm:"column:purchase_price" json:"purchase_price"`
 
 	PaymentType       *string `gorm:"column:payment_type" json:"payment_type"`
 	PaymentMethodName *string `gorm:"column:payment_method_name" json:"payment_method_name"`
+	MidtransResponse datatypes.JSON `gorm:"column:midtrans_response" json:"midtrans_response"`
 
 	// Status
 	PaymentStatus    string  `gorm:"column:payment_status;default:pending;index" json:"payment_status"`

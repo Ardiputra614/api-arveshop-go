@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
+	"gorm.io/datatypes"
 )
 
 type CreateTransactionRequest struct {
@@ -22,13 +25,13 @@ type CreateTransactionRequest struct {
 	CustomerNo    string  `json:"customer_no" binding:"required"`
 	SellingPrice  float64 `json:"selling_price" binding:"required"`
 	Fee           float64 `json:"fee"`
-	PaymentMethod string  `json:"payment_method" binding:"required"`
+	PaymentMethodName string  `json:"payment_method_name" binding:"required"`
 	WaPembeli     string  `json:"wa_pembeli" binding:"required"`
 	ProductType   string  `json:"product_type"`
+	PurchasePrice float64 `json:"purchase_price"` // Tambahkan purchase price
 }
 
 func CreateTransaction(c *gin.Context) {
-
 	var req CreateTransactionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -43,8 +46,13 @@ func CreateTransaction(c *gin.Context) {
 
 	rand.Seed(time.Now().UnixNano())
 
-	grossAmount := uint64(req.SellingPrice + req.Fee)
-	sellingPrice := uint64(req.SellingPrice)
+	// Konversi ke decimal.Decimal
+	sellingPrice := decimal.NewFromFloat(req.SellingPrice)
+	fee := decimal.NewFromFloat(req.Fee)
+	purchasePrice := decimal.NewFromFloat(req.PurchasePrice)
+	
+	// Hitung gross amount
+	grossAmount := sellingPrice.Add(fee)
 
 	orderID := fmt.Sprintf("ORD-%s-%d",
 		time.Now().Format("20060102150405"),
@@ -52,41 +60,44 @@ func CreateTransaction(c *gin.Context) {
 	)
 
 	// ===============================
-	// ITEM DETAILS
+	// ITEM DETAILS (Midtrans butuh int untuk price)
 	// ===============================
 
 	itemDetails := []map[string]interface{}{
 		{
-			"id":       req.ID,
-			"price":    int(req.SellingPrice),
+			"id":       fmt.Sprintf("%d", req.ID),
+			"price":    int(sellingPrice.IntPart()), // Konversi ke int untuk Midtrans
 			"quantity": 1,
 			"name":     req.ProductName,
 		},
-		{
+	}
+
+	// Tambah fee item jika > 0
+	if fee.GreaterThan(decimal.Zero) {
+		itemDetails = append(itemDetails, map[string]interface{}{
 			"id":       "fee",
-			"price":    int(req.Fee),
+			"price":    int(fee.IntPart()),
 			"quantity": 1,
 			"name":     "Biaya Admin",
-		},
+		})
 	}
 
 	transactionData := map[string]interface{}{
 		"transaction_details": map[string]interface{}{
 			"order_id":     orderID,
-			"gross_amount": grossAmount,
+			"gross_amount": int(grossAmount.IntPart()), // Konversi ke int untuk Midtrans
 		},
 		"item_details": itemDetails,
 	}
 
 	paymentType := ""
-	paymentMethodName := req.PaymentMethod
+	paymentMethodName := req.PaymentMethodName
 
 	// ===============================
 	// PAYMENT TYPE LOGIC
 	// ===============================
 
-	switch req.PaymentMethod {
-
+	switch req.PaymentMethodName {
 	case "qris":
 		paymentType = "qris"
 		transactionData["payment_type"] = "qris"
@@ -99,21 +110,21 @@ func CreateTransaction(c *gin.Context) {
 		transactionData["payment_type"] = "gopay"
 		transactionData["gopay"] = map[string]interface{}{
 			"enable_callback": true,
-			"callback_url":    "https://yourdomain.com/callback",
+			"callback_url":    os.Getenv("APP_URL") + "/api/callback/midtrans",
 		}
 
 	case "shopeepay":
 		paymentType = "shopeepay"
 		transactionData["payment_type"] = "shopeepay"
 		transactionData["shopeepay"] = map[string]interface{}{
-			"callback_url": "https://yourdomain.com/callback",
+			"callback_url": os.Getenv("APP_URL") + "/api/callback/midtrans",
 		}
 
 	case "bca", "bni", "bri", "permata", "mandiri", "cimb":
 		paymentType = "bank_transfer"
 		transactionData["payment_type"] = "bank_transfer"
 		transactionData["bank_transfer"] = map[string]interface{}{
-			"bank": req.PaymentMethod,
+			"bank": req.PaymentMethodName,
 		}
 
 	default:
@@ -133,7 +144,13 @@ func CreateTransaction(c *gin.Context) {
 		return
 	}
 
+	// Log request untuk debugging
+	fmt.Printf("Midtrans Request: %s\n", string(jsonData))
+
 	midtransURL := "https://api.sandbox.midtrans.com/v2/charge"
+	if os.Getenv("MIDTRANS_ENV") == "production" {
+		midtransURL = "https://api.midtrans.com/v2/charge"
+	}
 
 	httpReq, err := http.NewRequest("POST", midtransURL, bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -142,17 +159,21 @@ func CreateTransaction(c *gin.Context) {
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
 	httpReq.SetBasicAuth(os.Getenv("MIDTRANS_SERVER_KEY"), "")
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed call Midtrans"})
+		c.JSON(500, gin.H{"error": "Failed call Midtrans: " + err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
+
+	// Log response untuk debugging
+	fmt.Printf("Midtrans Response (%d): %s\n", resp.StatusCode, string(body))
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
 		c.JSON(resp.StatusCode, gin.H{
@@ -172,6 +193,15 @@ func CreateTransaction(c *gin.Context) {
 	statusMessage, _ := responseData["status_message"].(string)
 
 	urlOrVA := getPaymentURLOrVA(responseData)
+	deeplinkGopay := getDeeplinkGopay(responseData)
+
+
+	// Konversi response ke JSON untuk disimpan di database
+	midtransResponseJSON, err := json.Marshal(responseData)
+	if err != nil {
+		log.Printf("Warning: Failed to marshal Midtrans response: %v", err)
+		midtransResponseJSON = []byte("{}") // Default empty object jika error
+	}
 
 	// ===============================
 	// SAVE TO DATABASE
@@ -186,27 +216,36 @@ func CreateTransaction(c *gin.Context) {
 		OrderID:           orderID,
 		TransactionID:     stringPtr(transactionID),
 		GrossAmount:       grossAmount,
-		SellingPrice:      uint64Ptr(sellingPrice),
-		PurchasePrice:     uint64Ptr(sellingPrice),
+		SellingPrice:      sellingPrice,
+		PurchasePrice:     purchasePrice,
 		PaymentType:       stringPtr(paymentType),
 		PaymentMethodName: stringPtr(paymentMethodName),
 		PaymentStatus:     "pending",
 		StatusMessage:     stringPtr(statusMessage),
 		URL:               stringPtr(urlOrVA),
+		DeeplinkGopay:     stringPtr(deeplinkGopay),
 		WaPembeli:         req.WaPembeli,
+		MidtransResponse: datatypes.JSON(midtransResponseJSON),
 	}
 
 	if err := config.DB.Create(&transaction).Error; err != nil {
-		c.JSON(500, gin.H{"error": "Failed save transaction"})
+		c.JSON(500, gin.H{"error": "Failed save transaction: " + err.Error()})
 		return
 	}
 
+	// Load relasi jika perlu
+	config.DB.Preload("Product").First(&transaction, transaction.ID)
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Payment created",
-		"data":    responseData,
+		"data": gin.H{
+			"transaction":   transaction,
+			"payment_url":   urlOrVA,
+			"deeplink":      deeplinkGopay,
+			"midtrans_data": responseData,
+		},
 	})
 }
-
 
 func stringPtr(s string) *string {
 	if s == "" {
@@ -215,16 +254,17 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-func uint64Ptr(u uint64) *uint64 {
-	return &u
-}
-
 func getPaymentURLOrVA(data map[string]interface{}) string {
-
 	// QRIS / e-wallet
 	if actions, ok := data["actions"].([]interface{}); ok {
 		for _, a := range actions {
 			if action, ok := a.(map[string]interface{}); ok {
+				if name, ok := action["name"].(string); ok && name == "generate-qr-code" {
+					if url, ok := action["url"].(string); ok {
+						return url
+					}
+				}
+				// Fallback ke url pertama
 				if url, ok := action["url"].(string); ok {
 					return url
 				}
@@ -243,7 +283,51 @@ func getPaymentURLOrVA(data map[string]interface{}) string {
 		}
 	}
 
+	// Redirect URL
+	if redirectURL, ok := data["redirect_url"].(string); ok {
+		return redirectURL
+	}
+
 	return ""
 }
 
+func getDeeplinkGopay(data map[string]interface{}) string {
+	if actions, ok := data["actions"].([]interface{}); ok {
+		for _, a := range actions {
+			if action, ok := a.(map[string]interface{}); ok {
+				if name, ok := action["name"].(string); ok && name == "deeplink-redirect" {
+					if url, ok := action["url"].(string); ok {
+						return url
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
 
+func GetStatusPayment(p *gin.Context) {
+	order_id := p.Param("order_id")
+
+	var status models.Transaction
+
+	err := config.DB.Where("order_id = ?", order_id).First(&status).Error
+
+	if err != nil {
+		p.JSON(http.StatusNotFound, gin.H{"message": "data tidak ditemukan"})
+		return
+	}
+
+	if err != nil {
+		p.JSON(http.StatusInternalServerError, gin.H{"message": "gagal mengambil data"})
+		return
+	}
+
+	p.JSON(http.StatusOK, gin.H{"message": "Berhasil", 
+    "data": gin.H{
+        "transaction_id": status.TransactionID,
+        "order_id":       status.OrderID,        
+        "payment_status": status.PaymentStatus,
+		"digiflazz_status": status.DigiflazzStatus,
+    },})
+}
