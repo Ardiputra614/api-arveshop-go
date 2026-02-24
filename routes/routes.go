@@ -2,6 +2,7 @@ package routes
 
 import (
 	"api-arveshop-go/controllers"
+	"api-arveshop-go/websocket"
 
 	"github.com/gin-gonic/gin"
 )
@@ -15,7 +16,23 @@ func SetupRoutes(r *gin.Engine) {
 	r.POST("/api/create-transaction", controllers.CreateTransaction)
 	r.POST("/api/get-products", controllers.GetProducts)
 	r.GET("/api/history/:order_id", controllers.GetHistory)
-	r.GET("/api/get-status-payment/:order_id", controllers.GetStatusPayment)
+	// r.GET("/api/get-status-payment/:order_id", controllers.GetStatusPayment)
+
+	// start websocket manager
+	go websocket.Manager.Start()
+	
+	// WebSocket endpoint
+	r.GET("/ws", controllers.WebSocketConnection)
+	
+	r.GET("/api/payment-status/:order_id", controllers.GetStatusPayment)
+	r.POST("/api/payment-status/update", controllers.UpdatePaymentStatus)
+	r.POST("/api/webhook/midtrans", controllers.HandleMidtransWebhook)
+
+	// webhook := r.Group("/api/webhook")
+	// {
+	// 	webhook.POST("/midtrans", controllers.HandleMidtransWebhook)
+	// 	webhook.POST("/midtrans-test", controllers.TestMidtransWebhook)
+	// }
 
 	api := r.Group("/api/admin")
 	{

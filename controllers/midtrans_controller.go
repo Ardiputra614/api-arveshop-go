@@ -3,6 +3,7 @@ package controllers
 import (
 	"api-arveshop-go/config"
 	"api-arveshop-go/models"
+	"api-arveshop-go/websocket"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -307,27 +308,78 @@ func getDeeplinkGopay(data map[string]interface{}) string {
 }
 
 func GetStatusPayment(p *gin.Context) {
-	order_id := p.Param("order_id")
+	orderID := p.Param("order_id")
 
-	var status models.Transaction
+	var transaction models.Transaction
 
-	err := config.DB.Where("order_id = ?", order_id).First(&status).Error
+	err := config.DB.Where("order_id = ?", orderID).First(&transaction).Error
 
 	if err != nil {
 		p.JSON(http.StatusNotFound, gin.H{"message": "data tidak ditemukan"})
 		return
 	}
 
-	if err != nil {
-		p.JSON(http.StatusInternalServerError, gin.H{"message": "gagal mengambil data"})
+	p.JSON(http.StatusOK, gin.H{
+		"message": "Berhasil",
+		"data": gin.H{
+			"transaction_id":   transaction.TransactionID,
+			"order_id":         transaction.OrderID,
+			"payment_status":   transaction.PaymentStatus,
+			"digiflazz_status": transaction.DigiflazzStatus,
+			"gross_amount":     transaction.GrossAmount,
+			"payment_type":     transaction.PaymentType,
+			"updated_at":       transaction.UpdatedAt,
+		},
+	})
+}
+
+// WebSocket endpoint
+func WebSocketConnection(c *gin.Context) {
+	websocket.HandleWebSocket(c)
+}
+
+// UpdatePaymentStatus - Contoh fungsi yang memicu WebSocket broadcast
+func UpdatePaymentStatus(c *gin.Context) {
+	var req struct {
+		OrderID        string `json:"order_id"`
+		PaymentStatus  string `json:"payment_status"`
+		DigiflazzStatus string `json:"digiflazz_status"`
+	}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-
-	p.JSON(http.StatusOK, gin.H{"message": "Berhasil", 
-    "data": gin.H{
-        "transaction_id": status.TransactionID,
-        "order_id":       status.OrderID,        
-        "payment_status": status.PaymentStatus,
-		"digiflazz_status": status.DigiflazzStatus,
-    },})
+	
+	// Update database
+	var transaction models.Transaction
+	if err := config.DB.Where("order_id = ?", req.OrderID).First(&transaction).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not found"})
+		return
+	}
+	
+	updates := map[string]interface{}{
+		"payment_status":   req.PaymentStatus,
+		"digiflazz_status": req.DigiflazzStatus,
+		"updated_at":       time.Now(),
+	}
+	
+	config.DB.Model(&transaction).Updates(updates)
+	
+	// Broadcast update via WebSocket
+	websocket.BroadcastOrderStatus(req.OrderID)
+	
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Status updated and broadcasted",
+	})
 }
+
+// Webhook handler yang memicu WebSocket
+// func HandleMidtransWebhook(c *gin.Context) {
+// 	// ... existing webhook code ...
+	
+// 	// After updating transaction status
+// 	// websocket.BroadcastOrderStatus(notification.OrderID)
+	
+// 	c.JSON(http.StatusOK, gin.H{"status": "success"})
+// }
