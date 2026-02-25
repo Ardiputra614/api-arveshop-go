@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -19,7 +20,6 @@ import (
 )
 
 func GetProducts(c *gin.Context) {
-
 	apiURL := "https://api.digiflazz.com/v1/price-list"
 	username := os.Getenv("DIGIFLAZZ_USERNAME")
 	apiKey := os.Getenv("DIGIFLAZZ_PROD_KEY")
@@ -76,57 +76,87 @@ func GetProducts(c *gin.Context) {
 		return
 	}
 
-	for _, item := range data {
+	// Di dalam fungsi GetProducts Anda
+for _, item := range data {
+    product, ok := item.(map[string]interface{})
+    if !ok {
+        continue
+    }
 
-		product, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
+    buyerSkuCode := getString(product, "buyer_sku_code")
+    productName := getString(product, "product_name")
 
-		buyerSkuCode, _ := product["buyer_sku_code"].(string)
-		productName, _ := product["product_name"].(string)
+    if buyerSkuCode == "" || productName == "" {
+        continue
+    }
 
-		if buyerSkuCode == "" || productName == "" {
-			continue
-		}
+    slug := slugify(getString(product, "brand"))
 
-		slug := slugify(getString(product, "brand"))
+    // 🔴 AMBIL DATA CUTOFF (LANGSUNG STRING)
+    startCutOff := getString(product, "start_cut_off")
+    endCutOff := getString(product, "end_cut_off")
 
-		var existing models.Product
+    var existing models.Product
+    err := config.DB.Where("buyer_sku_code = ?", buyerSkuCode).First(&existing).Error
 
-		err := config.DB.Where("buyer_sku_code = ?", buyerSkuCode).First(&existing).Error
+    if err == nil {
+        // UPDATE
+        updates := map[string]interface{}{
+            "product_name":           productName,
+            "slug":                   slug,
+            "category":               getString(product, "category"),
+            "brand":                  getString(product, "brand"),
+            "type":                   getString(product, "type"),
+            "product_type":           "prepaid",
+            "seller_name":            getString(product, "seller_name"),
+            "price":                  getUint(product["price"]),
+            "selling_price":           getUint(product["price"]),
+            "buyer_sku_code":          buyerSkuCode,
+            "buyer_product_status":    getBool(product, "buyer_product_status", true),
+            "seller_product_status":   getBool(product, "seller_product_status", true),
+            "unlimited_stock":         getBool(product, "unlimited_stock", false),
+            "multi":                   getBool(product, "multi", false),
+            "stock":                   getString(product, "stock"),
+            "start_cut_off":           startCutOff, // ✅ LANGSUNG STRING
+            "end_cut_off":             endCutOff,   // ✅ LANGSUNG STRING
+            "description":             getString(product, "desc"),
+            "updated_at":              time.Now(),
+        }
 
-		if err == nil {
-			// UPDATE
-			config.DB.Model(&existing).Updates(models.Product{
-				ProductName: productName,
-				Slug:        slug,
-				Category:    getString(product, "category"),
-				Brand:       getString(product, "brand"),
-				Type:        getString(product, "type"),
-				ProductType: "prepaid",
-				SellerName:  getString(product, "seller_name"),
-				SellingPrice: getUint(product["price"]),
-				Price:        getUint(product["price"]),
-				UpdatedAt:    time.Now(),
-			})
-		} else {
-			// CREATE
-			newProduct := models.Product{
-				BuyerSkuCode: buyerSkuCode,
-				ProductName:  productName,
-				Slug:         slug,
-				Category:     getString(product, "category"),
-				Brand:        getString(product, "brand"),
-				Type:         getString(product, "type"),
-				ProductType:  "prepaid",
-				SellerName:   getString(product, "seller_name"),
-				SellingPrice: getUint(product["price"]),
-				Price:        getUint(product["price"]),
-			}
-			config.DB.Create(&newProduct)
-		}
-	}
+        if err := config.DB.Model(&existing).Updates(updates).Error; err != nil {
+            log.Printf("Gagal update: %v", err)
+        }
+
+    } else {
+        // CREATE
+        newProduct := models.Product{
+            ProductName:         productName,
+            Slug:                slug,
+            Category:            getString(product, "category"),
+            Brand:               getString(product, "brand"),
+            Type:                getString(product, "type"),
+            ProductType:         "prepaid",
+            SellerName:          getString(product, "seller_name"),
+            Price:               getUint(product["price"]),
+            SellingPrice:        getUint(product["price"]),
+            BuyerSkuCode:        buyerSkuCode,
+            BuyerProductStatus:  getBool(product, "buyer_product_status", true),
+            SellerProductStatus: getBool(product, "seller_product_status", true),
+            UnlimitedStock:      getBool(product, "unlimited_stock", false),
+            Multi:               getBool(product, "multi", false),
+            Stock:               getString(product, "stock"),
+            StartCutOff:         startCutOff, // ✅ LANGSUNG STRING
+            EndCutOff:           endCutOff,   // ✅ LANGSUNG STRING
+            Description:         getString(product, "desc"),
+            CreatedAt:           time.Now(),
+            UpdatedAt:           time.Now(),
+        }
+
+        if err := config.DB.Create(&newProduct).Error; err != nil {
+            log.Printf("Gagal create: %v", err)
+        }
+    }
+}
 
 	c.JSON(200, responseData)
 }
@@ -225,6 +255,41 @@ func GetProducts(c *gin.Context) {
 // 	c.JSON(200, responseData)
 // }
 
+
+func getBool(data map[string]interface{}, key string, defaultValue bool) bool {
+    // Cek apakah key ada dan tidak nil
+    if val, ok := data[key]; ok && val != nil {
+        // Coba konversi ke bool
+        if b, ok := val.(bool); ok {
+            return b
+        }
+        
+        // Coba konversi dari string
+        if str, ok := val.(string); ok {
+            strLower := strings.ToLower(str)
+            switch strLower {
+            case "true", "1", "yes", "aktif", "on":
+                return true
+            case "false", "0", "no", "tidak", "off":
+                return false
+            }
+        }
+        
+        // Coba konversi dari number
+        if num, ok := val.(float64); ok {
+            return num != 0
+        }
+        if num, ok := val.(int); ok {
+            return num != 0
+        }
+        if num, ok := val.(int64); ok {
+            return num != 0
+        }
+    }
+    
+    // Jika tidak ada atau tidak valid, kembalikan defaultValue
+    return defaultValue
+}
 
 func md5Hash(text string) string {
 	hash := md5.Sum([]byte(text))

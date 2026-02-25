@@ -29,3 +29,13 @@ contentDispositionType: "attachment",
 contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
 formats: ["image/avif", "image/webp"],
 },
+
+<!-- queue pakai redis -->
+
+sudo apt update
+sudo apt install redis-server
+
+# Jalankan Redis
+
+sudo systemctl start redis-server
+sudo systemctl enable redis-server

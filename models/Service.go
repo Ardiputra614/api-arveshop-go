@@ -13,9 +13,9 @@ type Service struct {
 	Name       string  `gorm:"column:name;size:255;not null" json:"name"`
 	Slug       string  `gorm:"column:slug;size:255;uniqueIndex;not null" json:"slug"`
 	Logo       *string `gorm:"column:logo;size:255" json:"logo"`
-	LogoPublicID *string `gorm:"column:logo_public_id";size:255" json:"logo_public_id"`
+	LogoPublicID *string `gorm:"column:logo_public_id;size:255" json:"logo_public_id"`
 	Icon       *string `gorm:"column:icon;size:255" json:"icon"`
-	IconPublicID *string `gorm:"column:icon_public_id";size:255" json:"icon_public_id"`
+	IconPublicID *string `gorm:"column:icon_public_id;size:255" json:"icon_public_id"`
 	CategoryID uint    `gorm:"column:category_id;not null;index" json:"category_id"`
 	Category   Category  `json:"category" gorm:"foreignKey:CategoryID"` //INI UNTUK PANGGIL RELASI PAKAI Category di Preload("Category")
 

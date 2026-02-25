@@ -20,16 +20,16 @@ import (
 )
 
 type CreateTransactionRequest struct {
-	ID            uint    `json:"id" binding:"required"`
-	ProductName   string  `json:"product_name" binding:"required"`
-	BuyerSkuCode  string  `json:"buyer_sku_code" binding:"required"`
-	CustomerNo    string  `json:"customer_no" binding:"required"`
-	SellingPrice  float64 `json:"selling_price" binding:"required"`
-	Fee           float64 `json:"fee"`
-	PaymentMethodName string  `json:"payment_method_name" binding:"required"`
-	WaPembeli     string  `json:"wa_pembeli" binding:"required"`
-	ProductType   string  `json:"product_type"`
-	PurchasePrice float64 `json:"purchase_price"` // Tambahkan purchase price
+	ID              uint    `json:"id" binding:"required"`
+	ProductName     string  `json:"product_name" binding:"required"`
+	ProductType     string  `json:"product_type"`
+	BuyerSkuCode    string  `json:"buyer_sku_code" binding:"required"`
+	CustomerNo      string  `json:"customer_no" binding:"required"`
+	SellingPrice    float64 `json:"selling_price" binding:"required"`
+	Fee             float64 `json:"fee"`
+	PurchasePrice   float64 `json:"purchase_price"`
+	PaymentMethodName string `json:"payment_method_name" binding:"required"` // ✅ KONSISTEN
+	WaPembeli       string  `json:"wa_pembeli" binding:"required"`
 }
 
 func CreateTransaction(c *gin.Context) {
@@ -47,7 +47,7 @@ func CreateTransaction(c *gin.Context) {
 
 	rand.Seed(time.Now().UnixNano())
 
-	// Konversi ke decimal.Decimal
+	// ✅ VALIDASI DECIMAL
 	sellingPrice := decimal.NewFromFloat(req.SellingPrice)
 	fee := decimal.NewFromFloat(req.Fee)
 	purchasePrice := decimal.NewFromFloat(req.PurchasePrice)
@@ -61,19 +61,18 @@ func CreateTransaction(c *gin.Context) {
 	)
 
 	// ===============================
-	// ITEM DETAILS (Midtrans butuh int untuk price)
+	// ITEM DETAILS
 	// ===============================
 
 	itemDetails := []map[string]interface{}{
 		{
 			"id":       fmt.Sprintf("%d", req.ID),
-			"price":    int(sellingPrice.IntPart()), // Konversi ke int untuk Midtrans
+			"price":    int(sellingPrice.IntPart()),
 			"quantity": 1,
 			"name":     req.ProductName,
 		},
 	}
 
-	// Tambah fee item jika > 0
 	if fee.GreaterThan(decimal.Zero) {
 		itemDetails = append(itemDetails, map[string]interface{}{
 			"id":       "fee",
@@ -86,7 +85,7 @@ func CreateTransaction(c *gin.Context) {
 	transactionData := map[string]interface{}{
 		"transaction_details": map[string]interface{}{
 			"order_id":     orderID,
-			"gross_amount": int(grossAmount.IntPart()), // Konversi ke int untuk Midtrans
+			"gross_amount": int(grossAmount.IntPart()),
 		},
 		"item_details": itemDetails,
 	}
@@ -201,7 +200,7 @@ func CreateTransaction(c *gin.Context) {
 	midtransResponseJSON, err := json.Marshal(responseData)
 	if err != nil {
 		log.Printf("Warning: Failed to marshal Midtrans response: %v", err)
-		midtransResponseJSON = []byte("{}") // Default empty object jika error
+		midtransResponseJSON = []byte("{}")
 	}
 
 	// ===============================
@@ -226,7 +225,7 @@ func CreateTransaction(c *gin.Context) {
 		URL:               stringPtr(urlOrVA),
 		DeeplinkGopay:     stringPtr(deeplinkGopay),
 		WaPembeli:         req.WaPembeli,
-		MidtransResponse: datatypes.JSON(midtransResponseJSON),
+		MidtransResponse:  datatypes.JSON(midtransResponseJSON),
 	}
 
 	if err := config.DB.Create(&transaction).Error; err != nil {

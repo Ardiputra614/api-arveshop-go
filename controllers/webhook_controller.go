@@ -3,9 +3,11 @@ package controllers
 
 import (
 	"api-arveshop-go/config"
+	"api-arveshop-go/jobs"
 	"api-arveshop-go/models"
 	"api-arveshop-go/websocket"
 	"bytes"
+	"context"
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
@@ -232,17 +234,27 @@ func parseGrossAmount(grossAmountStr string) (decimal.Decimal, error) {
 
 // Trigger proses pengiriman ke Digiflazz
 func triggerDigiflazzProcessing(transaction *models.Transaction) {
-	// TODO: Implementasi pengiriman ke Digiflazz
-	// Ini akan dipanggil secara asynchronous (goroutine)
-	
-	log.Printf("Triggering Digiflazz for order: %s", transaction.OrderID)
-	
-	// Update status Digiflazz menjadi "Processing"
-	processing := "Processing"
-	config.DB.Model(transaction).Update("digiflazz_status", processing)
-	
-	// Panggil service Digiflazz
-	// digiflazzService.ProcessTransaction(transaction)
+    log.Printf("Triggering Digiflazz for order: %s", transaction.OrderID)
+
+    job := jobs.NewDigiflazzTopupJob(
+        transaction.ID,
+        config.DB,
+        config.RDB, // redis client kamu
+        jobs.DigiflazzConfig{
+            Username: os.Getenv("DIGIFLAZZ_USERNAME"),
+            ProdKey:  os.Getenv("DIGIFLAZZ_PROD_KEY"),
+            BaseURL:  "https://api.digiflazz.com",
+        },
+    )
+
+    go func() {
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+        defer cancel()
+
+        if err := job.Handle(ctx); err != nil {
+            log.Printf("Digiflazz job error for order %s: %v", transaction.OrderID, err)
+        }
+    }()
 }
 
 // Endpoint untuk testing webhook
@@ -301,5 +313,107 @@ func ManualUpdateStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Status updated",
 		"data":    transaction,
+	})
+}
+
+
+// Struktur yang sesuai dengan payload Digiflazz
+type DigiflazzWebhookPayload struct {
+	Data struct {
+		RefID          string `json:"ref_id"`  // 🔴 INI AKAN BERISI ORDER_ID KITA
+		TrxID          string `json:"trx_id"`
+		CustomerNo     string `json:"customer_no"`
+		BuyerSkuCode   string `json:"buyer_sku_code"`
+		Message        string `json:"message"`
+		Status         string `json:"status"`
+		RC             string `json:"rc"`
+		BuyerLastSaldo int    `json:"buyer_last_saldo"`
+		SN             string `json:"sn"`
+		Price          int    `json:"price"`
+		Tele           string `json:"tele"`
+		Wa             string `json:"wa"`
+	} `json:"data"`
+}
+
+func HandleDigiflazzWebhook(c *gin.Context) {
+	// Baca body request
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		log.Printf("Error reading Digiflazz webhook body: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read body"})
+		return
+	}
+	
+	// Restore body
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	
+	// Log untuk debugging
+	log.Printf("📥 Digiflazz Webhook received: %s", string(bodyBytes))
+	
+	// Parse JSON
+	var payload DigiflazzWebhookPayload
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		log.Printf("Error parsing webhook JSON: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON format"})
+		return
+	}
+	
+	// 🔴 AMBIL ORDER_ID DARI REF_ID
+	data := payload.Data
+	orderID := data.RefID
+	
+	if orderID == "" {
+		log.Printf("❌ RefID (OrderID) kosong dalam webhook")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "RefID is empty"})
+		return
+	}
+	
+	log.Printf("📦 Processing webhook for order: %s, status: %s", orderID, data.Status)
+	
+	// Cari transaksi berdasarkan OrderID
+	var transaction models.Transaction
+	if err := config.DB.Where("order_id = ?", orderID).First(&transaction).Error; err != nil {
+		log.Printf("❌ Transaction not found for order_id: %s", orderID)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not found"})
+		return
+	}
+	
+	// Update status berdasarkan webhook
+	statusMessage := data.Message
+	updates := map[string]interface{}{
+		"digiflazz_status":  data.Status,
+		"status_message":    &statusMessage,
+		"serial_number":     &data.SN,
+		"updated_at":        time.Now(),
+	}
+	
+	// Simpan trx_id untuk referensi (optional)
+	if data.TrxID != "" {
+		updates["transaction_id"] = &data.TrxID
+	}
+	
+	// Update status pembayaran jika perlu
+	if data.Status == "Sukses" {
+		updates["payment_status"] = "success"
+		log.Printf("✅ Transaksi %s sukses via webhook", orderID)
+	} else if data.Status == "Gagal" {
+		updates["payment_status"] = "failed"
+		log.Printf("❌ Transaksi %s gagal via webhook", orderID)
+	}
+	
+	// Update ke database
+	if err := config.DB.Model(&transaction).Updates(updates).Error; err != nil {
+		log.Printf("❌ Error updating transaction: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update transaction"})
+		return
+	}
+	
+	// Broadcast via WebSocket
+	go websocket.BroadcastOrderStatus(orderID)
+	
+	// Return 200 OK
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Webhook received",
 	})
 }

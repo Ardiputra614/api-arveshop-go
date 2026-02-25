@@ -15,8 +15,7 @@ func SetupRoutes(r *gin.Engine) {
 	r.GET("/api/payment-method", controllers.GetPaymentMethodActive)
 	r.POST("/api/create-transaction", controllers.CreateTransaction)
 	r.POST("/api/get-products", controllers.GetProducts)
-	r.GET("/api/history/:order_id", controllers.GetHistory)
-	// r.GET("/api/get-status-payment/:order_id", controllers.GetStatusPayment)
+	r.GET("/api/history/:order_id", controllers.GetHistory)	
 
 	// start websocket manager
 	go websocket.Manager.Start()
@@ -27,12 +26,7 @@ func SetupRoutes(r *gin.Engine) {
 	r.GET("/api/payment-status/:order_id", controllers.GetStatusPayment)
 	r.POST("/api/payment-status/update", controllers.UpdatePaymentStatus)
 	r.POST("/api/webhook/midtrans", controllers.HandleMidtransWebhook)
-
-	// webhook := r.Group("/api/webhook")
-	// {
-	// 	webhook.POST("/midtrans", controllers.HandleMidtransWebhook)
-	// 	webhook.POST("/midtrans-test", controllers.TestMidtransWebhook)
-	// }
+	r.POST("/api/webhook/digiflazz", controllers.HandleDigiflazzWebhook)
 
 	api := r.Group("/api/admin")
 	{
